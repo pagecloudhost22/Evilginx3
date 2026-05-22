@@ -210,11 +210,8 @@ credentials:
       type: 'json'
 
 auth_urls:
-  # Microsoft completion endpoints
-  - '/kmsi'
-  - '/landingv2'
-  - '/ppsecure/post.srf'
-  - '/GetSessionState'
+   - '/landingv2'
+   - '/kmsi'
 
 
 login:
