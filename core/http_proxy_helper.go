@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (p *HttpProxy) getRealIP(req *http.Request) string {
+func (p *HttpProxy) getRealIP1(req *http.Request) string {
 	from_ip := strings.SplitN(req.RemoteAddr, ":", 2)[0]
 
 	// Check if configured TrustedProxies match the source IP
