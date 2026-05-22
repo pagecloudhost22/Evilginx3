@@ -359,6 +359,15 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 			from_ip := p.getRealIP(req)
 			ps.RemoteIP = from_ip
 
+			// ADD EXPLICIT BLACKLIST CHECK HERE
+			if p.bl != nil && p.bl.IsBlacklisted(from_ip) {
+				if p.wl == nil || !p.wl.IsWhitelisted(from_ip) {
+					log.Warning("blacklist: blocking request from blacklisted IP: %s", from_ip)
+					r, resp := p.blockRequest(req)
+					return r, resp
+				}
+			}
+
 			var tlsState *tls.ConnectionState
 			if ctx.Resp != nil && ctx.Resp.TLS != nil {
 				tlsState = ctx.Resp.TLS
