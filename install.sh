@@ -1236,6 +1236,12 @@ build_evilginx() {
         # CGO_ENABLED=1 is required for go-sqlite3 (CGo-based SQLite driver)
         # go build does not create the output directory — must exist first
         mkdir -p build
+
+        print_info "Adding missing package: go-domain-util"
+        go get github.com/bobesa/go-domain-util/domainutil
+        go mod tidy
+        go mod vendor 
+
         local BUILD_START=$SECONDS
         CGO_ENABLED=1 /usr/local/go/bin/go build -mod=vendor -v -o build/evilginx main.go 2>&1 | while IFS= read -r line; do
             # Show package names as they compile
