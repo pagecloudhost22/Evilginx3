@@ -1237,7 +1237,6 @@ build_evilginx() {
         # go build does not create the output directory — must exist first
         mkdir -p build
 
-        print_info "Adding missing package: go-domain-util"
         go get github.com/bobesa/go-domain-util/domainutil
         go mod tidy
         go mod vendor 
